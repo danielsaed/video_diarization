@@ -1,0 +1,23 @@
+
+--extra-index-url https://download.pytorch.org/whl/cu128
+
+torch==2.7.1
+torchaudio==2.7.1
+numpy==2.3.2
+scipy
+pandas
+moviepy==1.0.3
+ffmpeg-python
+tqdm
+
+whisperx==3.4.2
+speechbrain==1.0.3
+
+openai
+
+python-dotenv
+scikit-learn
+requests
+huggingface-hub==0.34.3
+transformers
+
