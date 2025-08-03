@@ -20,7 +20,7 @@ RUN wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86
 RUN dpkg -i cuda-keyring_1.1-1_all.deb
 RUN apt-get update
 # Instalar las librerías de cuDNN para CUDA 12.1
-RUN apt-get install -y libcudnn8=8.9.7.29-1+cuda12.1
+RUN apt-get install -y libcudnn8 libcudnn8-dev
 # --- FIN: INSTALACIÓN MANUAL DE cuDNN ---
 
 # Establecer el directorio de trabajo
@@ -32,6 +32,7 @@ COPY requirements.txt .
 # Instalar las dependencias de Python.
 # Nota: Ahora también necesitamos instalar PyTorch, ya que no viene en la imagen base.
 RUN python3 -m pip install --no-cache-dir -r requirements.txt
+
 
 # Copiar el resto del código
 COPY . .
