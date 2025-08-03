@@ -1,32 +1,40 @@
-
+# Usas la imagen runtime como base
 FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04
 
-# Establecer el directorio de trabajo dentro del contenedor
+# Establecer variables para que la instalación no sea interactiva
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Instalar dependencias básicas del sistema, INCLUYENDO Python y pip
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gnupg \
+    wget \
+    ffmpeg \
+    git \
+    python3 \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- INICIO: INSTALACIÓN MANUAL DE cuDNN ---
+# Añadir el repositorio de NVIDIA para poder instalar cuDNN
+RUN wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+RUN dpkg -i cuda-keyring_1.1-1_all.deb
+RUN apt-get update
+# Instalar las librerías de cuDNN para CUDA 12.1
+RUN apt-get install -y libcudnn8=8.9.7.29-1+cuda12.1
+# --- FIN: INSTALACIÓN MANUAL DE cuDNN ---
+
+# Establecer el directorio de trabajo
 WORKDIR /app
 
-# Instalar dependencias del sistema operativo.
-# whisperx (y muchas otras librerías de audio/video) requiere ffmpeg.
-RUN apt-get update && apt-get install -y \
-    python3 python3-pip ffmpeg libsndfile1 git && \
-    ln -s /usr/bin/python3 /usr/bin/python && \
-    libcudnn8 libcudnn8-dev && \
-    rm -rf /var/lib/apt/lists/*
-
-# Copiar primero el archivo de requerimientos.
-# Esto es una optimización clave de Docker. Si este archivo no cambia,
-# Docker usará la caché para la instalación de pip, haciendo que las
-# futuras construcciones sean mucho más rápidas.
+# Copiar el archivo de requerimientos
 COPY requirements.txt .
 
 # Instalar las dependencias de Python.
-# --no-cache-dir ayuda a mantener el tamaño de la imagen final más pequeño.
-RUN pip install --no-cache-dir -r requirements.txt
+# Nota: Ahora también necesitamos instalar PyTorch, ya que no viene en la imagen base.
+RUN python3 -m pip install --no-cache-dir -r requirements.txt
 
-# Copiar el resto del código de la aplicación al directorio de trabajo.
-# Esto incluye tu runpod_handler.py y la carpeta voice_library/.
+# Copiar el resto del código
 COPY . .
 
-# Comando que se ejecutará cuando el contenedor se inicie.
-# Le dice a Runpod que inicie tu script handler.
-# El flag -u es para salida sin buffer, lo que mejora la visualización de logs en tiempo real.
+# Comando de inicio
 CMD ["python", "-u", "runpod_handler.py"]
