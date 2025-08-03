@@ -9,6 +9,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     python3 python3-pip ffmpeg libsndfile1 git && \
     ln -s /usr/bin/python3 /usr/bin/python && \
+    libcudnn8 libcudnn8-dev &&\
     rm -rf /var/lib/apt/lists/*
 
 # Copiar primero el archivo de requerimientos.
