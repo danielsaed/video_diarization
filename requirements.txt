@@ -13,6 +13,7 @@ tqdm
 
 whisperx==3.4.2
 speechbrain==1.0.3
+pyannote.audio
 
 openai
 
