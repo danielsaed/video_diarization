@@ -1,4 +1,4 @@
-FROM runpod/pytorch:2.2.1-py3.11-cuda12.1.1-devel-ubuntu22.04
+FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04
 
 # Establecer el directorio de trabajo dentro del contenedor
 WORKDIR /app
