@@ -1,5 +1,5 @@
 # Usas la imagen runtime como base
-FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04
+FROM pytorch/pytorch:2.3.0-cuda12.1-cudnn8-devel
 
 # Establecer variables para que la instalación no sea interactiva
 ENV DEBIAN_FRONTEND=noninteractive
@@ -10,15 +10,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     ffmpeg \
     git \
-    python3 \
-    python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-# --- INICIO: INSTALACIÓN MANUAL DE cuDNN ---
-# Añadir el repositorio de NVIDIA para poder instalar cuDNN
-RUN wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
-RUN dpkg -i cuda-keyring_1.1-1_all.deb
-RUN apt-get update
+
 # Instalar las librerías de cuDNN para CUDA 12.1
 RUN apt-get install -y libcudnn8 libcudnn8-dev
 # --- FIN: INSTALACIÓN MANUAL DE cuDNN ---
