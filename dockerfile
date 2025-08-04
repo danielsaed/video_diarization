@@ -1,5 +1,5 @@
 # Usas la imagen runtime como base
-FROM pytorch/pytorch:2.3.0-cuda12.1-cudnn8-devel
+FROM pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime
 
 # Establecer variables para que la instalación no sea interactiva
 ENV DEBIAN_FRONTEND=noninteractive
@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 
 # Instalar las librerías de cuDNN para CUDA 12.1
-RUN apt-get install -y libcudnn8 libcudnn8-dev
+#RUN apt-get install -y libcudnn8 libcudnn8-dev
 # --- FIN: INSTALACIÓN MANUAL DE cuDNN ---
 
 # Establecer el directorio de trabajo
