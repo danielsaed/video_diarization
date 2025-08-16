@@ -21,7 +21,7 @@ HUGGING_FACE_TOKEN = os.getenv("HF_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # --- INICIALIZACIÓN DE MODELOS GLOBALES (Se ejecutan UNA VEZ por worker) ---
-print("--- INICIANDO WORKER: CARGA DE MODELOS GLOBALES ---")
+print("--- aaaa ---")
 DEVICE = "cuda"
 COMPUTE_TYPE = "float16" # "int8" si tienes problemas de memoria
 
@@ -236,14 +236,14 @@ def handler(job):
         
         print("5. Realizando análisis con GPT-4o...")
         mentions = count_pilot_mentions(final_text, F1_PILOTS_2025)
-        gpt_analysis_text = analyze_with_gpt(final_text, mentions)
+        #gpt_analysis_text = analyze_with_gpt(final_text, mentions)
         
         print("Proceso completado con éxito.")
         
         # 3. Devolver el resultado final
         return {
             "transcription": final_text,
-            "gpt_analysis": gpt_analysis_text
+            "gpt_analysis": mentions
         }
 
     except Exception as e:
