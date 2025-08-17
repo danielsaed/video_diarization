@@ -147,6 +147,9 @@ def handler(job):
     
     language_code_input = job_input.get("language_code")
 
+    perform_diarization = job_input.get("perform_diarization", True)
+
+
     temp_audio_path = "/tmp/job_audio.wav"
     try:
         print(f"Descargando audio desde la URL...")
@@ -192,40 +195,61 @@ def handler(job):
         print("1. Transcribiendo audio completo...")
         result = model.transcribe(audio_waveform, batch_size=8, language=detected_language)
         if not result.get("segments"):
-            return {"transcription": "No se detectó texto en el audio.", "detected_language": detected_language}
+            return {
+                "transcription": "No se detectó texto en el audio.",
+                "detected_language": detected_language,
+                "diarization_performed": False
+            }
         
         print(f"2. Alineando transcripción para '{detected_language}'...")
         result = whisperx.align(result["segments"], local_model_a, local_metadata, audio_waveform, DEVICE, return_char_alignments=False)
         
-        print("3. Realizando diarización...")
-        diarization_df = diarize_model(audio_waveform, max_speakers=4)
-        result = whisperx.assign_word_speakers(diarization_df, result)
-        
-        print("4. Identificando hablantes...")
-        final_speaker_mapping = identify_speakers_automatically(diarization_df, audio_waveform)
-        
-        print("Generando transcripción final...")
-        full_transcript_content = []
-        for segment in result.get("segments", []):
-            start_time = segment.get("start", 0)
-            speaker_label = segment.get("speaker", "NARRADOR")
-            text = segment.get("text", "").strip()
-            if text:
-                display_name = final_speaker_mapping.get(speaker_label, speaker_label)
-                line = f"[{format_timestamp(start_time)}] {display_name}: {text}"
-                full_transcript_content.append(line)
-        
+        ### CAMBIO CLAVE: BLOQUE CONDICIONAL PARA LA DIARIZACIÓN ###
+        if perform_diarization:
+            print("Diarización ACTIVADA.")
+            print("3. Realizando diarización...")
+            diarization_df = diarize_model(audio_waveform, max_speakers=5)
+            result = whisperx.assign_word_speakers(diarization_df, result)
+            
+            print("4. Identificando hablantes...")
+            final_speaker_mapping = identify_speakers_automatically(diarization_df, audio_waveform)
+            
+            print("Generando transcripción final con hablantes...")
+            full_transcript_content = []
+            for segment in result.get("segments", []):
+                start_time = segment.get("start", 0)
+                # La clave "speaker" ahora existe gracias a assign_word_speakers
+                speaker_label = segment.get("speaker", "NARRADOR")
+                text = segment.get("text", "").strip()
+                if text:
+                    display_name = final_speaker_mapping.get(speaker_label, speaker_label)
+                    line = f"[{format_timestamp(start_time)}] {display_name}: {text}"
+                    full_transcript_content.append(line)
+        else:
+            print("Diarización DESACTIVADA.")
+            print("Generando transcripción simple con timestamps...")
+            full_transcript_content = []
+            for segment in result.get("segments", []):
+                start_time = segment.get("start", 0)
+                text = segment.get("text", "").strip()
+                if text:
+                    # Formato simple sin nombre de hablante
+                    line = f"[{format_timestamp(start_time)}] {text}"
+                    full_transcript_content.append(line)
+
         final_text = "\n".join(full_transcript_content)
         
-        # El análisis de GPT está desactivado por defecto para evitar costos y porque el prompt es específico de español.
-        # Puedes reactivarlo si lo adaptas para ser multilingüe.
-        gpt_analysis_text = "El análisis con GPT está desactivado en el modo multilingüe."
-        
+        # Adaptamos el análisis de GPT
+        gpt_analysis_text = "El análisis con GPT requiere que la diarización esté activada."
+        if perform_diarization:
+             gpt_analysis_text = "Análisis con GPT desactivado en esta versión." # O reactiva tu función aquí
+
         print("Proceso completado con éxito.")
         
         return {
             "transcription": final_text,
             "detected_language": detected_language,
+            "diarization_performed": perform_diarization, # Informamos si se hizo o no
             "gpt_analysis": gpt_analysis_text
         }
 
