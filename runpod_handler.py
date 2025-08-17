@@ -2,7 +2,6 @@
 import os
 import gc
 import re
-import base64
 from collections import Counter
 
 import torch
@@ -15,18 +14,26 @@ from scipy.spatial.distance import cdist
 
 import runpod
 import requests
+import traceback
 
 # --- CARGA DE VARIABLES DE ENTORNO (Se configuran en Runpod UI) ---
 HUGGING_FACE_TOKEN = os.getenv("HF_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # --- INICIALIZACIÓN DE MODELOS GLOBALES (Se ejecutan UNA VEZ por worker) ---
-print("--- aaaa ---")
+print("--- INICIANDO WORKER MULTILINGÜE ---")
 DEVICE = "cuda"
-COMPUTE_TYPE = "float16" # "int8" si tienes problemas de memoria
+COMPUTE_TYPE = "float16"
 
-# Carga de modelos de IA
 print(f"Usando dispositivo: {DEVICE} con compute_type: {COMPUTE_TYPE}")
+
+# Variables para los modelos que se cargarán
+embedding_model = None
+model = None
+diarize_model = None
+# Precargamos el modelo de alineación para el idioma más común (español)
+# para acelerar las peticiones en ese idioma.
+model_a_es, metadata_es = None, None
 
 try:
     embedding_model = sb.EncoderClassifier.from_hparams(
@@ -36,19 +43,20 @@ try:
     )
     print("Modelo de huellas vocales (SpeechBrain) cargado.")
     
-    model = whisperx.load_model("large-v3", DEVICE, compute_type=COMPUTE_TYPE, language="es")
-    print("Modelo de transcripción (WhisperX large-v3) cargado.")
+    # Cargar el modelo de transcripción SIN especificar idioma para activar la detección automática.
+    model = whisperx.load_model("large-v3", DEVICE, compute_type=COMPUTE_TYPE)
+    print("Modelo de transcripción (WhisperX large-v3) cargado en modo multilingüe.")
 
-    model_a, metadata = whisperx.load_align_model(language_code="es", device=DEVICE)
-    print("Modelo de alineación cargado.")
+    # Precargar el modelo de alineación para español
+    model_a_es, metadata_es = whisperx.load_align_model(language_code="es", device=DEVICE)
+    print("Modelo de alineación para 'es' precargado.")
 
     diarize_model = whisperx.diarize.DiarizationPipeline(use_auth_token=HUGGING_FACE_TOKEN, device=DEVICE)
     print("Modelo de diarización cargado.")
 
 except Exception as e:
     print(f"ERROR CRÍTICO DURANTE LA CARGA DE MODELOS: {e}")
-    # Si un modelo no carga, el worker no puede funcionar.
-    embedding_model = model = model_a = diarize_model = None
+    traceback.print_exc()
 
 # --- CONFIGURACIONES Y LISTAS GLOBALES ---
 SIMILARITY_THRESHOLD = 0.5
@@ -64,11 +72,7 @@ F1_PILOTS_2025 = [
     "Franco Colapinto", "Ollie Bearman", "Isak Hadjar", "Kimi Antonelli", "Liam Lawson", "Gabriel Bortoleto"
 ]
 
-# --- FUNCIONES DE PROCESAMIENTO (Copiadas de tu script original) ---
-# (Aquí van todas tus funciones: format_timestamp, initialize_voice_library, 
-# identify_speakers_automatically, count_pilot_mentions, analyze_with_gpt)
-# Las he copiado y pegado abajo para mantener la estructura limpia.
-
+# --- FUNCIONES DE PROCESAMIENTO ---
 def format_timestamp(seconds):
     hours = int(seconds // 3600)
     minutes = int((seconds % 3600) // 60)
@@ -107,18 +111,15 @@ def identify_speakers_automatically(diarization_df, audio_waveform):
             clip_tensor = torch.from_numpy(clip).unsqueeze(0).to(DEVICE)
             embedding_unknown = embedding_model.encode_batch(clip_tensor).squeeze()
             
-            highest_similarity = 0.0
-            best_match_name = "DESCONOCIDO"
+            highest_similarity, best_match_name = 0.0, "DESCONOCIDO"
             for name, emb_known in voice_library_embeddings.items():
                 emb_unknown_np = embedding_unknown.cpu().numpy()
                 emb_known_np = emb_known.cpu().numpy()
                 if emb_unknown_np.ndim == 1: emb_unknown_np = np.expand_dims(emb_unknown_np, axis=0)
                 if emb_known_np.ndim == 1: emb_known_np = np.expand_dims(emb_known_np, axis=0)
-
                 similarity = 1 - cdist(emb_unknown_np, emb_known_np, "cosine")[0][0]
                 if similarity > highest_similarity:
-                    highest_similarity = similarity
-                    best_match_name = name
+                    highest_similarity, best_match_name = similarity, name
             
             if highest_similarity > SIMILARITY_THRESHOLD:
                 speaker_mapping[speaker_label] = best_match_name
@@ -129,90 +130,72 @@ def identify_speakers_automatically(diarization_df, audio_waveform):
             speaker_mapping[speaker_label] = speaker_label
     return speaker_mapping
 
-def count_pilot_mentions(text, pilots):
-    counts = Counter()
-    text_lower = text.lower()
-    pilots_sorted = sorted(pilots, key=len, reverse=True)
-    for pilot in pilots_sorted:
-        pilot_lower = pilot.lower()
-        pattern = r'\b' + re.escape(pilot_lower) + r'\b'
-        matches = re.findall(pattern, text_lower)
-        if matches:
-            counts[pilot] += len(matches)
-            text_lower = re.sub(pattern, '', text_lower)
-    return counts
-
-def analyze_with_gpt(full_text, pilot_mentions):
-    if not OPENAI_API_KEY or not full_text.strip(): return "Análisis GPT no disponible."
-    pilotos_mencionados = [pilot for pilot, count in pilot_mentions.most_common()]
-    pilotos_str = ", ".join(pilotos_mencionados) if pilotos_mencionados else "ninguno en particular"
-    prompt = (
-        f"Eres un analista experto en relaciones publicas, percepcion publica y de imagen personal especializado en motorsport especificamente en Fórmula 1. \n"
-        f"Tu tarea es atravez de una transcripcion de una sesion de F1, identificar patrones, ya sea de comportamiento, sesgos, intereses personales, conocimiento, ideologia, xenophobia, racismo y cualquier cosa relacionada al campo en el cual eres experto. El objetivo es conocer la calidad de la transmicion de F1 en espanol asi como la percepcion hacia los pilotos, equipos y personajes de F1 de parte de los relatores.\n" 
-        f"Los comentaristas identificados son Fernando Tornello ( Relator, Argentino, mas de 30 anos narrando F1, edad: 72), Cochito Lopez ( Analista, Argentino, Expiloto profesional, edad: 45), Albert Fabrega (Espanol, Periodista, Exmecanico de f1 experto en cosas tecnicas referentes a motorsport, edad: 53), Juan Fosarolli ( periodista, edad: 50 - 60 anos )\n"
-        f"Si se habla bien de un piloto que hace un buen performance es normal no existe sesgo, al igual que si tiene un mal performance sea lo contrario\n"
-        f"1. **Resumen General:** Crea un resumen de los eventos clave de la sesión.\n"
-        f"2. **Análisis por Piloto:** Para los pilotos mencionados ({pilotos_str}), en un pequeno resumen analiza en que contexto y tono fue mencionado, como es la percepcion de los comentariastas hacia el y en comparacion a los demas pilotos que tanto fue mencionado, si se emiten opiniones o cosas veridicas\n"
-        f"3. **Evaluación de Comentaristas:** Evalúa la imparcialidad y profesionalismo de los comentaristas basándote en su diálogo y el contexto proporcionado, ademas identifica la relevancia del aporte que hace cada uno respectivamente a la transmicion. con que frecuencia emiten opiniones y con que frecuencia emiten hechos.\n\n "
-        "Estructura tu respuesta claramente usando Markdown.\n\n"
-        "--- INICIO DE LA TRANSCRIPCIÓN ---\n"
-        f"{full_text}"
-        "\n--- FIN DE LA TRANSCRIPCIÓN ---"
-    )
-    try:
-        client = openai.OpenAI(api_key=OPENAI_API_KEY)
-        response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}], max_tokens=4096, temperature=0.5)
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        return f"Error al contactar con la API de OpenAI: {e}"
-
 # --- INICIALIZACIÓN DEL WORKER ---
-# Se inicializa la biblioteca de voces una vez, al arrancar el worker.
 initialize_voice_library()
 print("--- WORKER LISTO Y ESPERANDO TRABAJOS ---")
 
 
 # --- EL HANDLER PRINCIPAL DE RUNPOD ---
 def handler(job):
-    """
-    Esta es la función que Runpod ejecutará con cada petición.
-    """
-    if not all([embedding_model, model, model_a, diarize_model]):
+    if not all([embedding_model, model, diarize_model]):
         return {"error": "El worker no se inicializó correctamente, uno o más modelos fallaron al cargar."}
         
     job_input = job['input']
-    
-    # 1. Obtener la URL del audio y descargarlo
     audio_url = job_input.get("audio_url")
     if not audio_url:
-        return {"error": "No se recibió 'audio_url' en el input."}
-
-    # Ruta temporal dentro del contenedor para guardar el audio
-    temp_audio_path = "/tmp/job_audio.wav"
+        return {"error": "No se recibió 'audio_url' en la petición."}
     
+    language_code_input = job_input.get("language_code")
+
+    temp_audio_path = "/tmp/job_audio.wav"
     try:
-        print(f"Descargando audio desde la URL pre-firmada...")
+        print(f"Descargando audio desde la URL...")
         with requests.get(audio_url, stream=True) as r:
             r.raise_for_status()
             with open(temp_audio_path, 'wb') as f:
                 for chunk in r.iter_content(chunk_size=8192):
                     f.write(chunk)
-        print("Descarga de audio completada.")
+        print("Descarga completada.")
     except Exception as e:
         return {"error": f"No se pudo descargar el archivo de audio: {str(e)}"}
 
-    # 2. Ejecutar el pipeline de procesamiento de IA
     try:
         print("Cargando forma de onda de audio...")
         audio_waveform = whisperx.load_audio(temp_audio_path)
         
-        print("1. Transcribiendo audio...")
-        result = model.transcribe(audio_waveform, batch_size=8)
+        # --- LÓGICA DE DETECCIÓN DE IDIOMA ---
+        detected_language = language_code_input
+        if not detected_language:
+            print("No se especificó idioma. Detectando automáticamente...")
+            segments = model.transcribe(audio_waveform[:30*16000])["segments"]
+            detected_language = segments[0]["language"] if segments else "en"
+            print(f"Idioma detectado: {detected_language}")
+        else:
+            print(f"Idioma forzado por el usuario: {detected_language}")
+
+        # --- CARGA DINÁMICA DEL MODELO DE ALINEACIÓN ---
+        local_model_a, local_metadata = None, None
+        if detected_language == "es" and model_a_es is not None:
+            print("Usando modelo de alineación 'es' precargado.")
+            local_model_a, local_metadata = model_a_es, metadata_es
+        else:
+            print(f"Cargando modelo de alineación para el idioma: '{detected_language}'...")
+            try:
+                local_model_a, local_metadata = whisperx.load_align_model(
+                    language_code=detected_language, device=DEVICE
+                )
+                print("Nuevo modelo de alineación cargado.")
+            except Exception as e:
+                return {"error": f"No se pudo cargar el modelo de alineación para '{detected_language}': {e}"}
+
+        # --- PROCESAMIENTO PRINCIPAL ---
+        print("1. Transcribiendo audio completo...")
+        result = model.transcribe(audio_waveform, batch_size=8, language=detected_language)
         if not result.get("segments"):
-            return {"transcription": "No se detectó texto en el audio.", "gpt_analysis": ""}
+            return {"transcription": "No se detectó texto en el audio.", "detected_language": detected_language}
         
-        print("2. Alineando transcripción...")
-        result = whisperx.align(result["segments"], model_a, metadata, audio_waveform, DEVICE, return_char_alignments=False)
+        print(f"2. Alineando transcripción para '{detected_language}'...")
+        result = whisperx.align(result["segments"], local_model_a, local_metadata, audio_waveform, DEVICE, return_char_alignments=False)
         
         print("3. Realizando diarización...")
         diarization_df = diarize_model(audio_waveform, max_speakers=4)
@@ -234,24 +217,24 @@ def handler(job):
         
         final_text = "\n".join(full_transcript_content)
         
-        print("5. Realizando análisis con GPT-4o...")
-        mentions = count_pilot_mentions(final_text, F1_PILOTS_2025)
-        #gpt_analysis_text = analyze_with_gpt(final_text, mentions)
+        # El análisis de GPT está desactivado por defecto para evitar costos y porque el prompt es específico de español.
+        # Puedes reactivarlo si lo adaptas para ser multilingüe.
+        gpt_analysis_text = "El análisis con GPT está desactivado en el modo multilingüe."
         
         print("Proceso completado con éxito.")
         
-        # 3. Devolver el resultado final
         return {
             "transcription": final_text,
-            "gpt_analysis": mentions
+            "detected_language": detected_language,
+            "gpt_analysis": gpt_analysis_text
         }
 
     except Exception as e:
-        # Imprime el error en los logs de Runpod para depuración
         print(f"ERROR DURANTE EL PROCESAMIENTO DEL TRABAJO: {e}")
-        return {"error": f"Ocurrió un error durante el procesamiento: {str(e)}"}
+        traceback.print_exc()
+        return {"error": f"Ocurrió un error en el procesamiento: {str(e)}"}
     finally:
-        # 4. Limpieza: Asegurarse de borrar el archivo de audio descargado
+        # Limpieza
         if os.path.exists(temp_audio_path):
             os.remove(temp_audio_path)
             print("Archivo de audio temporal eliminado.")
@@ -260,5 +243,5 @@ def handler(job):
         gc.collect()
         torch.cuda.empty_cache()
 
-# Iniciar el servidor de Runpod para que escuche peticiones
+# Iniciar el servidor de Runpod
 runpod.serverless.start({"handler": handler})
